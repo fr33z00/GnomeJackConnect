@@ -66,6 +66,12 @@ const jackPatchbayInterface = '<node>\
     <signal name="GraphChanged"> \
         <arg type="t" direction="out"/>\
     </signal> \
+    <signal name="ClientAppeared"> \
+        <arg type="tss" direction="out"/>\
+    </signal> \
+    <signal name="PortAppeared"> \
+        <arg type="ttstsuu" direction="out"/>\
+    </signal> \
 </interface> \
 </node>';
 const jackPatchbayProxy = Gio.DBusProxy.makeProxyWrapper(jackPatchbayInterface);
@@ -75,11 +81,12 @@ const JackBaseMenuItem = new Lang.Class({
     Name: 'JackBaseMenuItem',
     Extends: PopupMenu.PopupSubMenuMenuItem,
 
-    _init: function(info, inputs, outputs, connections) {
-        this.parent(info);
+    _init: function(label, inputs, outputs, connections) {
+        this.parent(label);
 
         let menuItem = new PopupMenu.PopupMenuItem("");
 
+        this.label = label;
         this.inputs = inputs;
         this.outputs = outputs;
         this.connections = connections;
@@ -90,6 +97,7 @@ const JackBaseMenuItem = new Lang.Class({
         this.setDimensions();
         this.matrix.visible = true;
         menuItem.actor = this.matrix;
+        this.restoreConnections();
 
         this.menu.addMenuItem(menuItem);
     },
@@ -117,6 +125,26 @@ const JackBaseMenuItem = new Lang.Class({
         this.matrix.width = 10 + this.maxOutputSize + this.nboutputs*20 + this.maxInputSize + 10;
         this.matrix.height = 30 + (this.nboutputs)*20 + this.nbinputs*20;
     },
+
+    saveConnection: function(connection) {
+        let str = settings.get_string(this.label);
+        settings.set_string(this.label, str + connection + ',');
+    },
+
+    deleteConnection: function(connection) {
+        let str = settings.get_string(this.label);
+        if (!str.length)
+            return;
+        let newstr = '';
+        let con_list = str.split(',');
+        for (let i = 0; i < con_list.length; i++)
+            if (con_list[i] != connection && con_list[i].length)
+                newstr += con_list[i] + ',';
+        settings.set_string(this.label, newstr);
+    },
+
+    restoreConnections: function() {
+    },    
 
     addRemoveConnection: function(x, y) {
     },
@@ -177,12 +205,15 @@ const JackBaseMenuItem = new Lang.Class({
                 }
                 Clutter.cairo_set_source_color(cr, lines_color);
                 cr.setLineWidth(1);
+                if (j%2)
+                    cr.setDash([1,1], 0);
                 cr.moveTo(15, 20*soFarOutputs+25);
                 cr.showText(this.outputs[i][j]);
                 cr.relMoveTo(10, -5);
                 cr.lineTo(10 + this.maxOutputSize + (this.nboutputs-soFarOutputs)*20, 20*soFarOutputs+20);
                 cr.lineTo(10 + this.maxOutputSize + (this.nboutputs-soFarOutputs)*20, this.matrix.height-10);
                 cr.stroke();
+                cr.setDash([], 0);
                 soFarOutputs++;
             }
 
@@ -197,11 +228,14 @@ const JackBaseMenuItem = new Lang.Class({
                 }
                 Clutter.cairo_set_source_color(cr, lines_color);
                 cr.setLineWidth(1);
+                if (j%2)
+                    cr.setDash([1,1], 1);
                 cr.moveTo(20+this.maxOutputSize, 30 + 20*(this.nboutputs + soFarInputs));
                 cr.lineTo(30+this.maxOutputSize+20*this.nboutputs, 30 + 20*(this.nboutputs + soFarInputs));
                 cr.moveTo(40+this.maxOutputSize+20*this.nboutputs, 35 + 20*(this.nboutputs + soFarInputs));
                 cr.showText(this.inputs[i][j]);
                 cr.stroke();
+                cr.setDash([], 0);
                 soFarInputs++;
             }
 
@@ -230,8 +264,8 @@ const JackBaseMenuItem = new Lang.Class({
       this.parent(event);
     },
 
-    _propertiesChanged: function(info) {
-        this._label.text = info;
+    _propertiesChanged: function(label) {
+        this._label.text = label;
     },
 });
 
@@ -239,10 +273,29 @@ const JackMenuItem = new Lang.Class({
     Name: 'JackMenuItem',
     Extends: JackBaseMenuItem,
 
-    _init: function(info, inputs, outputs, connections) {
-        this.parent(info, inputs, outputs, connections);
+    _init: function(label, inputs, outputs, connections) {
+        this.parent(label, inputs, outputs, connections);
+        this.portAppearedId = jackProxy.connectSignal('PortAppeared', Lang.bind(this, this.restoreConnections));
     },
     
+    restoreConnections: function() {
+        let str = settings.get_string(this.label);
+        let con_list = str.split(',');
+        if (!con_list.length)
+            return;
+        for (let i = 0; i < con_list.length; i++) {
+            if (!con_list[i].length)
+                continue;
+            let con = con_list[i].split('::');
+            if (con.length != 4)
+                continue;
+            try {
+                jackProxy.ConnectPortsByNameSync(con[0], con[1], con[2], con[3]);
+            } catch(e) {
+            }
+        }
+    },    
+
     addRemoveConnection: function(x, y) {
         let i, j;
         let soFarOutputs = 0;
@@ -279,13 +332,20 @@ const JackMenuItem = new Lang.Class({
             let chan0 = output.substr(output.indexOf(':')+1);
             let port1 = input.substr(0, input.indexOf(':'));
             let chan1 = input.substr(input.indexOf(':')+1);
-            if (connected)
+            if (connected) {
                 jackProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
-            else
+                this.deleteConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+            }
+            else {
                 jackProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
+                this.saveConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+            }
         }
     },
 
+    detroy: function() {
+        jackProxy.disconnectSignal(this.portAppearedId);
+    },
 });
 
 Signals.addSignalMethods(JackMenuItem.prototype);
@@ -294,8 +354,23 @@ const AlsaMenuItem = new Lang.Class({
     Name: 'AlsaMenuItem',
     Extends: JackBaseMenuItem,
 
-    _init: function(info, inputs, outputs, connections) {
-        this.parent(info, inputs, outputs, connections);
+    _init: function(label, inputs, outputs, connections) {
+        this.parent(label, inputs, outputs, connections);
+    },
+
+    restoreConnections: function() {
+        let str = settings.get_string(this.label);
+        let con_list = str.split(',');
+        if (!con_list.length)
+            return;
+        for (let i = 0; i < con_list.length; i++) {
+            if (!con_list[i].length)
+                continue;
+            let con = con_list[i].split('::');
+            if (con.length != 4)
+                continue;
+            GLib.spawn_command_line_sync('aconnect ' + con[0] + ':' + con[1] + ' ' + con[2] + ':' + con[3]);
+        }
     },
     
     addRemoveConnection: function(x, y) {
@@ -334,10 +409,14 @@ const AlsaMenuItem = new Lang.Class({
             let chan0 = output.substr(output.indexOf(':')+1, output.substr(output.indexOf(':')+1).lastIndexOf(']'));
             let port1 = input.substr(1, input.indexOf(']'));
             let chan1 = input.substr(input.indexOf(':')+1, input.substr(input.indexOf(':')+1).lastIndexOf(']'));
-            if (connected)
+            if (connected) {
                 GLib.spawn_command_line_sync('aconnect -d ' + port0 + ':' + chan0 + ' ' + port1 + ':' + chan1);
-            else
+                this.deleteConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+            }
+            else {
                 GLib.spawn_command_line_sync('aconnect ' + port0 + ':' + chan0 + ' ' + port1 + ':' + chan1);
+                this.saveConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+            }
             this.emit("alsa-changed");
         }
     },
@@ -576,9 +655,6 @@ const JackMenu = new Lang.Class({
                 }
             }
         }
-        Main.inlist = input_list;
-        Main.outlist = output_list;
-        Main.con = this.alsa_connections;
     },
 
     destroy: function() {
@@ -588,19 +664,38 @@ const JackMenu = new Lang.Class({
 
 });
 
-let _indicator;
-let button;
+let jackmenu;
+let settings;
+
+// function to retrieve settings
+function get_settings() {
+    let schema_id = "org.gnome.shell.extensions.JackConnect";
+    let schema_path = ExtensionUtils.getCurrentExtension().path + "/schemas";
+    let schema_source = Gio.SettingsSchemaSource.new_from_directory(schema_path,
+                        Gio.SettingsSchemaSource.get_default(),
+                        false);
+    if (!schema_source) {
+            throw new Error("Local schema directory for " + schema_id + " is missing");
+    }
+    let schema = schema_source.lookup(schema_id, true);
+    if (!schema) {
+            throw new Error("Schema " + schema_id + " is missing. Has glib-compile-schemas been called for it?");
+    }
+    return new Gio.Settings({settings_schema: schema});
+}
+
 
 function init(Metadata) {
     let theme = imports.gi.Gtk.IconTheme.get_default();
     theme.append_search_path(Metadata.path);
+    settings = get_settings();
 }
 
 function enable() {
-    _indicator = new JackMenu;
-    Main.panel.addToStatusArea('jack-menu', _indicator);
+    jackmenu = new JackMenu;
+    Main.panel.addToStatusArea('jack-menu', jackmenu);
 }
 
 function disable() {
-    _indicator.destroy();
+    jackmenu.destroy();
 }
