@@ -59,6 +59,9 @@ const jackPatchbayInterface = '<node>\
         <arg type="s" direction="in"/> \
         <arg type="s" direction="in"/> \
     </method> \
+    <method name="GetAllPorts"> \
+        <arg type="as" direction="out"/> \
+    </method> \
     <method name="GetGraph"> \
         <arg type="t" direction="in"/> \
         <arg name="graph" type="ta{tsa{tsuu}}a{tstststst}" direction="out"/> \
@@ -275,7 +278,8 @@ const JackMenuItem = new Lang.Class({
 
     _init: function(label, inputs, outputs, connections) {
         this.parent(label, inputs, outputs, connections);
-        this.portAppearedId = jackProxy.connectSignal('PortAppeared', Lang.bind(this, this.restoreConnections));
+//        this.clientAppearedId = jackProxy.connectSignal('ClientAppeared', this.restoreConnections);
+//        this.portAppearedId = jackProxy.connectSignal('PortAppeared', function(){Main.notify("port appeared");});
     },
     
     restoreConnections: function() {
@@ -283,16 +287,34 @@ const JackMenuItem = new Lang.Class({
         let con_list = str.split(',');
         if (!con_list.length)
             return;
+        let port_list = jackProxy.GetAllPortsSync();
+        port_list = String(port_list).split(',');
         for (let i = 0; i < con_list.length; i++) {
             if (!con_list[i].length)
                 continue;
             let con = con_list[i].split('::');
             if (con.length != 4)
                 continue;
-            try {
-                jackProxy.ConnectPortsByNameSync(con[0], con[1], con[2], con[3]);
-            } catch(e) {
+            let port0, chan0, port1, chan1;
+            for (let j = 0; j < port_list.length; j++) {
+                let port = port_list[j].split(':')[0];
+                let chan = port_list[j].split(':')[1];
+                if (port.match(/\D*/) == con[0] && chan == con[1]) {
+                    port0 = port;
+                    chan0 = chan;
+                }
+                if (port.match(/\D*/) == con[2] && chan == con[3]) {
+                    port1 = port;
+                    chan1 = chan;
+                }
+                if (port0 && port1)
+                    break;
             }
+            if (port0 && port1)
+                try {
+                    jackProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
+                } catch(e){
+                }
         }
     },    
 
@@ -334,11 +356,11 @@ const JackMenuItem = new Lang.Class({
             let chan1 = input.substr(input.indexOf(':')+1);
             if (connected) {
                 jackProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
-                this.deleteConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+                this.deleteConnection(port0.match(/\D*/)+'::'+chan0+'::'+port1.match(/\D*/)+'::'+chan1);
             }
             else {
                 jackProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
-                this.saveConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+                this.saveConnection(port0.match(/\D*/)+'::'+chan0+'::'+port1.match(/\D*/)+'::'+chan1);
             }
         }
     },
@@ -356,6 +378,11 @@ const AlsaMenuItem = new Lang.Class({
 
     _init: function(label, inputs, outputs, connections) {
         this.parent(label, inputs, outputs, connections);
+        this.openStateChangedId = this.menu.connect('open-state-changed', Lang.bind(this, this._onOpen));
+    },
+
+    _onOpen: function () {
+        this.emit('alsa-changed');
     },
 
     restoreConnections: function() {
@@ -405,10 +432,10 @@ const AlsaMenuItem = new Lang.Class({
             }
         }
         if (input && output) {
-            let port0 = output.substr(1, output.indexOf(']'));
-            let chan0 = output.substr(output.indexOf(':')+1, output.substr(output.indexOf(':')+1).lastIndexOf(']'));
-            let port1 = input.substr(1, input.indexOf(']'));
-            let chan1 = input.substr(input.indexOf(':')+1, input.substr(input.indexOf(':')+1).lastIndexOf(']'));
+            let port0 = output.split(':')[0].match(/\d+/);
+            let chan0 = output.split(':')[1].match(/\d+/);
+            let port1 = input.split(':')[0].match(/\d+/);
+            let chan1 = input.split(':')[1].match(/\d+/);
             if (connected) {
                 GLib.spawn_command_line_sync('aconnect -d ' + port0 + ':' + chan0 + ' ' + port1 + ':' + chan1);
                 this.deleteConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
@@ -419,6 +446,11 @@ const AlsaMenuItem = new Lang.Class({
             }
             this.emit("alsa-changed");
         }
+    },
+
+    destroy: function() {
+        this.parent();
+        this.menu.disconnect(this.openStateChangedId);
     },
 
 });
@@ -469,21 +501,26 @@ const JackMenu = new Lang.Class({
     _getJackGraph: function() {
         let graph = jackProxy.GetGraphSync(0);
         this.parseJackGraph(graph);
+        this._sections["audio"].restoreConnections();
         this._sections["audio"].setDimensions();
         this._sections["audio"].matrix.queue_repaint();
+        this._sections["midi"].restoreConnections();
         this._sections["midi"].setDimensions();
         this._sections["midi"].matrix.queue_repaint();
     },
 
     _getAlsaGraph: function() {
-        let [resi, inputs] = GLib.spawn_command_line_sync('aconnect -i');
-        let [reso, outputs] = GLib.spawn_command_line_sync('aconnect -o');
-        let [resg, graph] = GLib.spawn_command_line_sync('aconnect -l');
-        if (resi && reso && resg) {
-            this.parseAlsaGraph(String(inputs), String(outputs), String(graph));
-            this._sections["alsa"].setDimensions();
-            this._sections["alsa"].matrix.queue_repaint();
-        }
+        let [res, seq] = GLib.spawn_command_line_sync('cat /proc/asound/seq/clients');
+        if (!res)
+            return;
+        let graph = String(seq).split('Client');
+        graph.shift();
+        graph.shift();
+        graph.shift();
+        this.parseAlsaGraph(graph);
+        this._sections["alsa"].restoreConnections();
+        this._sections["alsa"].setDimensions();
+        this._sections["alsa"].matrix.queue_repaint();
     },
 
     parseJackGraph: function(graph) {
@@ -520,7 +557,7 @@ const JackMenu = new Lang.Class({
                 if (!ports[i][2][j][3] && (ports[i][2][j][2]&1)) {
                     if (this.audio_inputs[ai] == undefined)
                         this.audio_inputs[ai] = [];
-                    this.audio_inputs[ai][this.audio_inputs[ai].length] = name;
+                    this.audio_inputs[ai].push(name);
                     table[name] = [0, nai];
                     hasai = 1;
                     nai++;
@@ -528,7 +565,7 @@ const JackMenu = new Lang.Class({
                 else if (!ports[i][2][j][3] && (ports[i][2][j][2]&2)) {
                     if (this.audio_outputs[ao] == undefined)
                         this.audio_outputs[ao] = [];
-                    this.audio_outputs[ao][this.audio_outputs[ao].length] = name;
+                    this.audio_outputs[ao].push(name);
                     table[name] = [0, nao];
                     hasao = 1;
                     nao++;
@@ -536,7 +573,7 @@ const JackMenu = new Lang.Class({
                 else if (ports[i][2][j][3] && (ports[i][2][j][2]&1)) {
                     if (this.midi_inputs[mi] == undefined)
                         this.midi_inputs[mi] = [];
-                    this.midi_inputs[mi][this.midi_inputs[mi].length] = name;
+                    this.midi_inputs[mi].push(name);
                     table[name] = [1, nmi];
                     hasmi = 1;
                     nmi++;
@@ -544,7 +581,7 @@ const JackMenu = new Lang.Class({
                 else if (ports[i][2][j][3] && (ports[i][2][j][2]&2)) {
                     if (this.midi_outputs[mo] == undefined)
                         this.midi_outputs[mo] = [];
-                    this.midi_outputs[mo][this.midi_outputs[mo].length] = name;
+                    this.midi_outputs[mo].push(name);
                     table[name] = [1, nmo];
                     hasmo = 1;
                     nmo++;
@@ -561,99 +598,79 @@ const JackMenu = new Lang.Class({
             let conn_out = connections[i][1] + ":" + connections[i][3];
             let conn_in = connections[i][5] + ":" + connections[i][7];
             if (table[conn_in][0]) 
-                this.midi_connections[this.midi_connections.length] = [table[conn_out][1], table[conn_in][1]];
+                this.midi_connections.push([table[conn_out][1], table[conn_in][1]]);
             else
-                this.audio_connections[this.audio_connections.length] = [table[conn_out][1], table[conn_in][1]];
+                this.audio_connections.push([table[conn_out][1], table[conn_in][1]]);
         }
     },
 
-    parseAlsaGraph: function(inputs, outputs, graph) {
+    parseAlsaGraph: function(graph) {
         this.alsa_inputs.length = 0;
         this.alsa_outputs.length = 0;
         this.alsa_connections.length = 0;
-        let respLines = inputs.split("\n");
-        let client;
-        let clientNb;
-        let input_list = [];
-        for (let i = 0; i < respLines.length; i++) {
-            if (respLines[i].substr(0,1) != '\t' && respLines[i].substr(0,1) != ' ' && respLines[i].length > 1) {
-                client = undefined;
-                let clientLine = respLines[i].split("'");
-                clientNb = parseInt(clientLine[0].split(' ')[1]);
-                if (clientNb) {
-                    client = '[' + clientNb + ']' + clientLine[1];
-                    this.alsa_inputs[this.alsa_inputs.length] = [];
-                }
-            } else if (client && respLines[i].length > 1){
-                let port = respLines[i].split("'");
-                this.alsa_inputs[this.alsa_inputs.length-1][this.alsa_inputs[this.alsa_inputs.length-1].length] = client + ":[" + parseInt(port[0]) + "]" + port[1];
-                input_list[input_list.length] = clientNb + ":" + parseInt(port[0]);
-            }
+        let clients = {};
+        let clients_list = [];
+        let clientIdx = 0;
+        let inputs = 0;
+        let outputs = 0;
+        for (let i = 0; i < graph.length; i++) {
+            clientNb = parseInt(graph[i].match(/\d+/));
+            if (!clientNb || clientNb > 127)
+                continue;
+            clientName = String(graph[i].match(/".+"/)).replace('"','').replace('"','');
+            clients_list.push(clientNb);
+            clients[clientNb] = {};
+            clients[clientNb].name = clientName;
+            clients[clientNb].idx = clientIdx;
+            clients[clientNb].inputs = [];
+            clients[clientNb].outputs = [];
+            let ports = graph[i].split('Port ');
+            ports.shift();
+
+            clients[clientNb].connectionsTo = [];
+            clients[clientNb].connectionsFrom = [];
+            for (let j = 0; j < ports.length; j++) {
+                let portNb = parseInt(ports[j].match(/\d/));
+                let portName = String(ports[j].match(/".+"/)).replace('"','').replace('"','');
+                let portFlags = String(ports[j].match(/\(.+\)/));
+                let conTo = String(ports[j].match(/Connecting To.*\n/));
+                let conFrom = String(ports[j].match(/Connected From.*\n/));
+                if (portFlags.toLowerCase().indexOf('r') >= 0)
+                    clients[clientNb].outputs[portNb] = [outputs++, portName, conTo.match(/\d+:\d+/g)];
+                if (portFlags.toLowerCase().indexOf('w') >= 0)
+                    clients[clientNb].inputs[portNb] = [inputs++, portName, conFrom.match(/\d+:\d+/g)];
+            }                
+            clientIdx++;
         }
-        let output_list = [];
-        respLines = outputs.split("\n");
-        for (let i = 0; i < respLines.length; i++) {
-            if (respLines[i].substr(0,1) != '\t' && respLines[i].substr(0,1) != ' ' && respLines[i].length > 1) {
-                client = undefined;
-                let clientLine = respLines[i].split("'");
-                clientNb = parseInt(clientLine[0].split(' ')[1]);
-                if (clientNb) {
-                    client = '[' + clientNb + ']' + clientLine[1];
-                    this.alsa_outputs[this.alsa_outputs.length] = [];
-                }
-            } else if (client && respLines[i].length > 1){
-                let port = respLines[i].split("'");
-                this.alsa_outputs[this.alsa_outputs.length-1][this.alsa_outputs[this.alsa_outputs.length-1].length] = client + ":[" + parseInt(port[0]) + "]" + port[1];
-                output_list[output_list.length] = clientNb + ":" + parseInt(port[0]);
-            }
-        }
-        respLines = graph.split("\n");
-        let type;
-        let portIdxIn;
-        let portIdxOut;
-        for (let i = 0; i < respLines.length; i++) {
-            if (respLines[i].substr(0,1) != '\t' && respLines[i].substr(0,1) != ' ' && respLines[i].length > 1) {
-                client = undefined;
-                type = 0;
-                let clientLine = respLines[i].split("'");
-                clientNb = parseInt(clientLine[0].split(' ')[1]);
-                if (clientNb) {
-                    client = '[' + clientNb + ']' + clientLine[1];
-                }
-            } else if (client && respLines[i].length > 1 && respLines[i].indexOf("'") > 0){
-                let port = clientNb + ":" + parseInt(respLines[i].split("'")[0]);
-                for (let j = 0; j < input_list.length; j++) {
-                    if (port == input_list[j]) {
-                        type = 1;
-                        portIdxIn = j;
-                        break;
+        Main.cli = clients;
+        for (let i = 0; i < clients_list.length; i++) {
+            let client = clients[clients_list[i]];
+            let inputs = [];
+            let outputs = [];
+            for (let j = 0; j < client.inputs.length; j++)
+                if (client.inputs[j]) {
+                    inputs.push('[' + clients_list[i] + ']' + client.name + ':[' + j + ']' + client.inputs[j][1]);
+                    for (let k = 0; k < client.inputs[j][2].length; k++) {
+                        let srcClient = parseInt(client.inputs[j][2][k].substr(0, client.inputs[j][2][k].indexOf(':')));
+                        if (srcClient > 127)
+                            continue;
+                        let srcPort = parseInt(client.inputs[j][2][k].substr(client.inputs[j][2][k].indexOf(':')+1));
+                        this.alsa_connections.push([clients[srcClient].outputs[srcPort][0], client.inputs[j][0]]);
                     }
                 }
-                for (let j = 0; j < output_list.length; j++) {
-                    if (port == output_list[j]) {
-                        type |= 2;
-                        portIdxOut = j;
-                        break;
+            for (let j = 0; j < client.outputs.length; j++)
+                if (client.outputs[j]) {
+                    outputs.push('[' + clients_list[i] + ']' + client.name + ':[' + j + ']' + client.outputs[j][1]);
+                    for (let k = 0; k < client.outputs[j][2].length; k++) {
+                        let destClient = parseInt(client.outputs[j][2][k].substr(0, client.outputs[j][2][k].indexOf(':')));
+                        if (destClient > 127)
+                            continue;
+                        let destPort = parseInt(client.outputs[j][2][k].substr(client.outputs[j][2][k].indexOf(':')+1));
+                        this.alsa_connections.push([client.outputs[j][0], clients[destClient].inputs[destPort][0]]);
                     }
                 }
-                
-            } else if (client && respLines[i].length > 1){
-                if (type&2) {
-                    type &= 1;
-                    let con_list = respLines[i].substr(respLines[i].indexOf(": ")).split(",");
-                    for (let j = 0; j < con_list.length; j++)
-                        for (let k = 0; k < input_list.length; k++) 
-                            if (input_list[k] == con_list[j].substr(1))
-                                this.alsa_connections[this.alsa_connections.length] = [portIdxOut,k];
-                } else if (type&1) {
-                    let con_list = respLines[i].substr(respLines[i].indexOf(": ")).split(",");
-                    for (let j = 0; j < con_list.length; j++) {
-                        for (let k = 0; k < output_list.length; k++)
-                            if (output_list[k] == con_list[j].substr(1))
-                                this.alsa_connections[this.alsa_connections.length] = [k, portIdxIn];
-                    }
-                }
-            }
+            this.alsa_inputs.push(inputs);
+            this.alsa_outputs.push(outputs);
         }
     },
 
@@ -663,9 +680,12 @@ const JackMenu = new Lang.Class({
     }
 
 });
+Signals.addSignalMethods(JackMenu.prototype);
 
 let jackmenu;
 let settings;
+let remove_timeout = 0;
+let alsa_clients = 0;
 
 // function to retrieve settings
 function get_settings() {
@@ -684,6 +704,17 @@ function get_settings() {
     return new Gio.Settings({settings_schema: schema});
 }
 
+function check_alsa_clients (){
+    if (remove_timeout)
+        return false;
+    let [res, out] = GLib.spawn_command_line_sync('cat /proc/asound/seq/clients | grep "cur  clients"');
+    let clients = parseInt(String(out).match(/\d/));
+    if (clients != alsa_clients) {
+        alsa_clients = clients;
+        jackmenu._getAlsaGraph();
+    }
+    return true;
+}
 
 function init(Metadata) {
     let theme = imports.gi.Gtk.IconTheme.get_default();
@@ -694,8 +725,12 @@ function init(Metadata) {
 function enable() {
     jackmenu = new JackMenu;
     Main.panel.addToStatusArea('jack-menu', jackmenu);
+    alsa_clients = 0;
+    remove_timeout = 0;
+    GLib.timeout_add_seconds(1, 1, check_alsa_clients);
 }
 
 function disable() {
-    jackmenu.destroy();
+   remove_timeout = 1;
+   jackmenu.destroy();
 }
