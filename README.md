@@ -10,8 +10,8 @@ for very simple tasks.
 Requirements
 ------------
 
-- Gnome 3.20 (other versions untested, but may work from 3.16 and above. Needs metadata.json edition)
-- JackDbus
+- Gnome 3.20/3.22 (other versions untested, but may work from 3.16. Needs metadata.json edition)
+- jackd2 + JackDbus
 - aconnect (alsa-utils)
 
 Installation
