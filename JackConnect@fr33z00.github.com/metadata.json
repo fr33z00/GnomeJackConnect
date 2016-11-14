@@ -1,6 +1,6 @@
 {
   "name": "JackConnect",
-  "description": "A JACK (Jack Audio Connection Kit) connection manager for gnome",
+  "description": "A JACK (Jack Audio Connection Kit) connection manager for gnome. This extension allows to see/manage connections from gnome menu, and may replace QjackCtl for everyday use.",
   "uuid": "JackConnect@fr33z00.github.com",
   "shell-version": ["3.20", "3.22"],
   "url": "https://github.com/fr33z00/GnomeJackConnect",
