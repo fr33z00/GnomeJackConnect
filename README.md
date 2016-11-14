@@ -42,4 +42,9 @@ the 3 sections that you may already know : audio, midi and alsa.
 Each section shows a routing matrix, with sources on top left and destinations on bottom right. 
 Just click at the intersection of the wires you want to connect/disconnect.
 
+Note
+----
+
+Connections you made will be restored at your next session.
+
 Enjoy!
