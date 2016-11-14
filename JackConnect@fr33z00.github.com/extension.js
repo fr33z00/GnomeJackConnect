@@ -45,6 +45,7 @@ const Panel = imports.ui.panel;
 
 const ExtensionUtils = imports.misc.extensionUtils;
 
+// JACK DBus interface
 const jackPatchbayInterface = '<node>\
 <interface name="org.jackaudio.JackPatchbay"> \
     <method name="ConnectPortsByName"> \
@@ -80,6 +81,7 @@ const jackPatchbayInterface = '<node>\
 const jackPatchbayProxy = Gio.DBusProxy.makeProxyWrapper(jackPatchbayInterface);
 let jackProxy = new jackPatchbayProxy(Gio.DBus.session, 'org.jackaudio.service','/org/jackaudio/Controller')
 
+// base class for the sub menu item with the connection matrix
 const JackBaseMenuItem = new Lang.Class({
     Name: 'JackBaseMenuItem',
     Extends: PopupMenu.PopupSubMenuMenuItem,
@@ -93,18 +95,20 @@ const JackBaseMenuItem = new Lang.Class({
         this.inputs = inputs;
         this.outputs = outputs;
         this.connections = connections;
+        // create the matrix element
         this.matrix = new St.DrawingArea({reactive:true, can_focus: true});
         this.matrix.connect('repaint', Lang.bind(this, this._matrixRepaint));
         this.matrix.connect('button-press-event', Lang.bind(this, this._onClick));
-//        this.matrix.connect('motion-event', Lang.bind(this, this._onMouseOver));
         this.setDimensions();
         this.matrix.visible = true;
         menuItem.actor = this.matrix;
+        // restore connections saved during previous sessions
         this.restoreConnections();
-
+        // add the submenu to the menu        
         this.menu.addMenuItem(menuItem);
     },
-    
+
+    // computes the size of the matrix depending on inputs and outputs numbers    
     setDimensions: function(){
         this.nboutputs = 0;
         this.nbinputs = 0;
@@ -129,11 +133,13 @@ const JackBaseMenuItem = new Lang.Class({
         this.matrix.height = 30 + (this.nboutputs)*20 + this.nbinputs*20;
     },
 
+    // the function to store one connection to disk
     saveConnection: function(connection) {
         let str = settings.get_string(this.label);
         settings.set_string(this.label, str + connection + ',');
     },
 
+    // a function to delete one connection from disk
     deleteConnection: function(connection) {
         let str = settings.get_string(this.label);
         if (!str.length)
@@ -146,12 +152,17 @@ const JackBaseMenuItem = new Lang.Class({
         settings.set_string(this.label, newstr);
     },
 
+    // the prototype of the function that restores the connections
+    // needs to be replaced in classes based on this class 
     restoreConnections: function() {
     },    
 
+    // the prototype of the function that add or remove a connection from the patchbay
+    // needs to be replaced in classes based on this class 
     addRemoveConnection: function(x, y) {
     },
 
+    // function to get the coordinates of a connection point
     getCoordinate: function (actor, event) {
         let [absX, absY] = event.get_coords();
         let [origX, origY] = this.actor.get_transformed_position();
@@ -168,6 +179,7 @@ const JackBaseMenuItem = new Lang.Class({
         return [relX, relY];
     },
 
+    // function called on mouse click event
     _onClick: function(actor, event) {
         let [x, y] = this.getCoordinate(actor, event);
         if (x == undefined)
@@ -176,17 +188,9 @@ const JackBaseMenuItem = new Lang.Class({
         this.matrix.queue_repaint();
         return Clutter.EVENT_STOP;
     },
-    
-    _onMouseOver: function(actor, event) {
-        let [x, y] = this.getCoordinate(actor, event);
-        if (x == undefined)
-            return Clutter.EVENT_STOP;
-        
-        return Clutter.EVENT_STOP;
-    },
 
+    // function to repaint the matrix
     _matrixRepaint: function(area) {
-
         let cr = area.get_context();
         let [width, height] = area.get_surface_size();
         let lines_color = new Clutter.Color({red: 255, green: 255, blue: 255, alpha: 255});
@@ -262,26 +266,18 @@ const JackBaseMenuItem = new Lang.Class({
         this.parent();
     },
 
-    activate: function(event) {
-
-      this.parent(event);
-    },
-
-    _propertiesChanged: function(label) {
-        this._label.text = label;
-    },
 });
 
+// final class of the audio and midi submenu
 const JackMenuItem = new Lang.Class({
     Name: 'JackMenuItem',
     Extends: JackBaseMenuItem,
 
     _init: function(label, inputs, outputs, connections) {
         this.parent(label, inputs, outputs, connections);
-//        this.clientAppearedId = jackProxy.connectSignal('ClientAppeared', this.restoreConnections);
-//        this.portAppearedId = jackProxy.connectSignal('PortAppeared', function(){Main.notify("port appeared");});
     },
-    
+
+    // function to restore the audio/midi connections    
     restoreConnections: function() {
         let str = settings.get_string(this.label);
         let con_list = str.split(',');
@@ -318,6 +314,7 @@ const JackMenuItem = new Lang.Class({
         }
     },    
 
+    // function to add or remove a connection to/from the connection graph
     addRemoveConnection: function(x, y) {
         let i, j;
         let soFarOutputs = 0;
@@ -367,24 +364,22 @@ const JackMenuItem = new Lang.Class({
 
     detroy: function() {
         jackProxy.disconnectSignal(this.portAppearedId);
+        parent();
     },
 });
 
 Signals.addSignalMethods(JackMenuItem.prototype);
 
+// final class of the alsa submenu item
 const AlsaMenuItem = new Lang.Class({
     Name: 'AlsaMenuItem',
     Extends: JackBaseMenuItem,
 
     _init: function(label, inputs, outputs, connections) {
         this.parent(label, inputs, outputs, connections);
-        this.openStateChangedId = this.menu.connect('open-state-changed', Lang.bind(this, this._onOpen));
     },
 
-    _onOpen: function () {
-        this.emit('alsa-changed');
-    },
-
+    // function to restore the alsa connections    
     restoreConnections: function() {
         let str = settings.get_string(this.label);
         let con_list = str.split(',');
@@ -400,6 +395,7 @@ const AlsaMenuItem = new Lang.Class({
         }
     },
     
+    // function to add or remove a connection to/from the alsa connection graph
     addRemoveConnection: function(x, y) {
         let i, j;
         let soFarOutputs = 0;
@@ -450,7 +446,6 @@ const AlsaMenuItem = new Lang.Class({
 
     destroy: function() {
         this.parent();
-        this.menu.disconnect(this.openStateChangedId);
     },
 
 });
@@ -470,7 +465,6 @@ const JackMenu = new Lang.Class({
                                  style_class: 'system-status-icon' });
         hbox.add_child(icon);
         this.actor.add_actor(hbox);
-
         
         this.audio_inputs = [];
         this.audio_outputs = [];
@@ -484,6 +478,7 @@ const JackMenu = new Lang.Class({
 
         this._sections = { };
 
+        //create the submenu sections
         this._sections["audio"] = new JackMenuItem("audio", this.audio_inputs, this.audio_outputs, this.audio_connections);
         this.menu.addMenuItem(this._sections["audio"]);
         this._sections["midi"] = new JackMenuItem("midi", this.midi_inputs, this.midi_outputs, this.midi_connections);
@@ -491,13 +486,16 @@ const JackMenu = new Lang.Class({
         this._sections["alsa"] = new AlsaMenuItem("alsa", this.alsa_inputs, this.alsa_outputs, this.alsa_connections);
         this.menu.addMenuItem(this._sections["alsa"]);
 
+        // parse the connection graphs
         this._getJackGraph();
         this._getAlsaGraph();
+        // connect signals
         this.graphChangedId = jackProxy.connectSignal('GraphChanged', Lang.bind(this, this._getJackGraph));
         this._sections["alsa"].connect('alsa-changed', Lang.bind(this, this._getAlsaGraph));
 
     },
 
+    // function that retrieves the jack graph through DBus
     _getJackGraph: function() {
         let graph = jackProxy.GetGraphSync(0);
         this.parseJackGraph(graph);
@@ -509,6 +507,7 @@ const JackMenu = new Lang.Class({
         this._sections["midi"].matrix.queue_repaint();
     },
 
+    // function that retrieves the alsa graph from /proc/asound/seq/clients file
     _getAlsaGraph: function() {
         let [res, seq] = GLib.spawn_command_line_sync('cat /proc/asound/seq/clients');
         if (!res)
@@ -523,13 +522,8 @@ const JackMenu = new Lang.Class({
         this._sections["alsa"].matrix.queue_repaint();
     },
 
+    // parsing function for the jack connection graph
     parseJackGraph: function(graph) {
-/*    JackPortIsInput = 0x1,
-    JackPortIsOutput = 0x2,
-    JackPortIsPhysical = 0x4,
-    JackPortCanMonitor = 0x8,
-    JackPortIsTerminal = 0x10,
-*/
         let ports = graph[1];
         this.audio_inputs.length = 0;
         this.audio_outputs.length = 0;
@@ -604,6 +598,7 @@ const JackMenu = new Lang.Class({
         }
     },
 
+    // parsing function for the alsa connection graph
     parseAlsaGraph: function(graph) {
         this.alsa_inputs.length = 0;
         this.alsa_outputs.length = 0;
@@ -676,13 +671,16 @@ const JackMenu = new Lang.Class({
 
     destroy: function() {
         jackProxy.disconnectSignal(this.graphChangedId);
+        this._sections["audio"].destroy;
+        this._sections["midi"].destroy;
+        this._sections["alsa"].destroy;
         this.parent();
     }
 
 });
 Signals.addSignalMethods(JackMenu.prototype);
 
-let jackmenu;
+let jackmenu = null;
 let settings;
 let remove_timeout = 0;
 let alsa_clients = 0;
@@ -704,6 +702,7 @@ function get_settings() {
     return new Gio.Settings({settings_schema: schema});
 }
 
+// callback function to periodically check the alsa state
 function check_alsa_clients (){
     if (remove_timeout)
         return false;
@@ -723,7 +722,9 @@ function init(Metadata) {
 }
 
 function enable() {
-    jackmenu = new JackMenu;
+    if (jackmenu == null) {
+        jackmenu = new JackMenu;
+    }
     Main.panel.addToStatusArea('jack-menu', jackmenu);
     alsa_clients = 0;
     remove_timeout = 0;
@@ -731,6 +732,7 @@ function enable() {
 }
 
 function disable() {
-   remove_timeout = 1;
-   jackmenu.destroy();
+    remove_timeout = 1;
+    jackmenu.destroy();
+    jackmenu = null;
 }
