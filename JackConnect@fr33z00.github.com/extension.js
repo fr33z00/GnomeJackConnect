@@ -79,7 +79,21 @@ const jackPatchbayInterface = '<node>\
 </interface> \
 </node>';
 const jackPatchbayProxy = Gio.DBusProxy.makeProxyWrapper(jackPatchbayInterface);
-let jackProxy = new jackPatchbayProxy(Gio.DBus.session, 'org.jackaudio.service','/org/jackaudio/Controller')
+let jpProxy = new jackPatchbayProxy(Gio.DBus.session, 'org.jackaudio.service','/org/jackaudio/Controller')
+
+const jackControlInterface = '<node>\
+<interface name="org.jackaudio.JackControl"> \
+    <method name="IsStarted"> \
+        <arg type="b" direction="out"/>\
+    </method>\
+    <signal name="ServerStarted"> \
+    </signal> \
+    <signal name="ServerStopped"> \
+    </signal> \
+</interface> \
+</node>';
+const jackControlProxy = Gio.DBusProxy.makeProxyWrapper(jackControlInterface);
+let jcProxy = new jackControlProxy(Gio.DBus.session, 'org.jackaudio.service','/org/jackaudio/Controller');
 
 // base class for the sub menu item with the connection matrix
 const JackBaseMenuItem = new Lang.Class({
@@ -283,7 +297,15 @@ const JackMenuItem = new Lang.Class({
         let con_list = str.split(',');
         if (!con_list.length)
             return;
-        let port_list = jackProxy.GetAllPortsSync();
+        let port_list;
+        try{
+            if (jcProxy.IsStartedSync())
+                port_list = jpProxy.GetAllPortsSync();
+            else
+                return;
+        } catch(e) {
+            return;
+        }
         port_list = String(port_list).split(',');
         for (let i = 0; i < con_list.length; i++) {
             if (!con_list[i].length)
@@ -308,7 +330,7 @@ const JackMenuItem = new Lang.Class({
             }
             if (port0 && port1)
                 try {
-                    jackProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
+                    jpProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
                 } catch(e){
                 }
         }
@@ -352,20 +374,20 @@ const JackMenuItem = new Lang.Class({
             let port1 = input.substr(0, input.indexOf(':'));
             let chan1 = input.substr(input.indexOf(':')+1);
             if (connected) {
-                jackProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
+                jpProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
                 this.deleteConnection(port0.match(/\D*/)+'::'+chan0+'::'+port1.match(/\D*/)+'::'+chan1);
             }
             else {
-                jackProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
+                jpProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
                 this.saveConnection(port0.match(/\D*/)+'::'+chan0+'::'+port1.match(/\D*/)+'::'+chan1);
             }
         }
     },
 
-    detroy: function() {
-        jackProxy.disconnectSignal(this.portAppearedId);
-        parent();
+    destroy: function() {
+        this.parent();
     },
+
 });
 
 Signals.addSignalMethods(JackMenuItem.prototype);
@@ -490,14 +512,39 @@ const JackMenu = new Lang.Class({
         this._getJackGraph();
         this._getAlsaGraph();
         // connect signals
-        this.graphChangedId = jackProxy.connectSignal('GraphChanged', Lang.bind(this, this._getJackGraph));
+        this.graphChangedId = jpProxy.connectSignal('GraphChanged', Lang.bind(this, this._getJackGraph));
+        this.serverStoppedId = jcProxy.connectSignal('ServerStopped', Lang.bind(this, this._clearConnections));
         this._sections["alsa"].connect('alsa-changed', Lang.bind(this, this._getAlsaGraph));
 
     },
 
+    _clearConnections: function() {
+        this.audio_inputs.length = 0;
+        this.audio_outputs.length = 0;
+        this.audio_connections.length = 0;
+        this.midi_inputs.length = 0;
+        this.midi_outputs.length = 0;
+        this.midi_connections.length = 0;
+        this._sections["audio"].setDimensions();
+        this._sections["audio"].matrix.queue_repaint();
+        this._sections["midi"].setDimensions();
+        this._sections["midi"].matrix.queue_repaint();
+    },
+
     // function that retrieves the jack graph through DBus
     _getJackGraph: function() {
-        let graph = jackProxy.GetGraphSync(0);
+        let graph;
+        try {
+            if (jcProxy.IsStartedSync())
+                graph = jpProxy.GetGraphSync(0);
+            else {
+                this._clearConnections();
+                return;
+            }
+        } catch(e) {
+            this._clearConnections();
+            return;
+        }
         this.parseJackGraph(graph);
         this._sections["audio"].restoreConnections();
         this._sections["audio"].setDimensions();
@@ -670,7 +717,10 @@ const JackMenu = new Lang.Class({
     },
 
     destroy: function() {
-        jackProxy.disconnectSignal(this.graphChangedId);
+        if (this.graphChangedId)
+            jpProxy.disconnectSignal(this.graphChangedId);
+        if (this.serverStoppedId)
+            jcProxy.disconnectSignal(this.serverStoppedId);
         this._sections["audio"].destroy;
         this._sections["midi"].destroy;
         this._sections["alsa"].destroy;
@@ -704,8 +754,11 @@ function get_settings() {
 
 // callback function to periodically check the alsa state
 function check_alsa_clients (){
-    if (remove_timeout)
+    if (remove_timeout) {
+        jackmenu.destroy();
+        jackmenu = null;
         return false;
+    }
     let [res, out] = GLib.spawn_command_line_sync('cat /proc/asound/seq/clients | grep "cur  clients"');
     let clients = parseInt(String(out).match(/\d/));
     if (clients != alsa_clients) {
@@ -724,15 +777,13 @@ function init(Metadata) {
 function enable() {
     if (jackmenu == null) {
         jackmenu = new JackMenu;
+        alsa_clients = 0;
+        remove_timeout = 0;
+        GLib.timeout_add_seconds(1, 1, check_alsa_clients);
     }
     Main.panel.addToStatusArea('jack-menu', jackmenu);
-    alsa_clients = 0;
-    remove_timeout = 0;
-    GLib.timeout_add_seconds(1, 1, check_alsa_clients);
 }
 
 function disable() {
     remove_timeout = 1;
-    jackmenu.destroy();
-    jackmenu = null;
 }
