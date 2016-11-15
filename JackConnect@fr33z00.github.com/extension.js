@@ -515,7 +515,6 @@ const JackMenu = new Lang.Class({
         this.graphChangedId = jpProxy.connectSignal('GraphChanged', Lang.bind(this, this._getJackGraph));
         this.serverStoppedId = jcProxy.connectSignal('ServerStopped', Lang.bind(this, this._clearConnections));
         this._sections["alsa"].connect('alsa-changed', Lang.bind(this, this._getAlsaGraph));
-
     },
 
     _clearConnections: function() {
@@ -557,7 +556,7 @@ const JackMenu = new Lang.Class({
     // function that retrieves the alsa graph from /proc/asound/seq/clients file
     _getAlsaGraph: function() {
         let [res, seq] = GLib.spawn_command_line_sync('cat /proc/asound/seq/clients');
-        if (!res)
+        if (!res || !seq)
             return;
         let graph = String(seq).split('Client');
         graph.shift();
@@ -653,8 +652,8 @@ const JackMenu = new Lang.Class({
         let clients = {};
         let clients_list = [];
         let clientIdx = 0;
-        let inputs = 0;
-        let outputs = 0;
+        let inputsIdx = 0;
+        let outputsIdx = 0;
         for (let i = 0; i < graph.length; i++) {
             clientNb = parseInt(graph[i].match(/\d+/));
             if (!clientNb || clientNb > 127)
@@ -667,24 +666,27 @@ const JackMenu = new Lang.Class({
             clients[clientNb].inputs = [];
             clients[clientNb].outputs = [];
             let ports = graph[i].split('Port ');
+            if (ports.length < 2)
+                continue;
             ports.shift();
 
             clients[clientNb].connectionsTo = [];
             clients[clientNb].connectionsFrom = [];
             for (let j = 0; j < ports.length; j++) {
                 let portNb = parseInt(ports[j].match(/\d/));
+                if (portNb == undefined)
+                    continue;
                 let portName = String(ports[j].match(/".+"/)).replace('"','').replace('"','');
                 let portFlags = String(ports[j].match(/\(.+\)/));
                 let conTo = String(ports[j].match(/Connecting To.*\n/));
                 let conFrom = String(ports[j].match(/Connected From.*\n/));
                 if (portFlags.toLowerCase().indexOf('r') >= 0)
-                    clients[clientNb].outputs[portNb] = [outputs++, portName, conTo.match(/\d+:\d+/g)];
+                    clients[clientNb].outputs[portNb] = [outputsIdx++, portName, conTo.match(/\d+:\d+/g)];
                 if (portFlags.toLowerCase().indexOf('w') >= 0)
-                    clients[clientNb].inputs[portNb] = [inputs++, portName, conFrom.match(/\d+:\d+/g)];
+                    clients[clientNb].inputs[portNb] = [inputsIdx++, portName, conFrom.match(/\d+:\d+/g)];
             }                
             clientIdx++;
         }
-        Main.cli = clients;
         for (let i = 0; i < clients_list.length; i++) {
             let client = clients[clients_list[i]];
             let inputs = [];
@@ -692,6 +694,8 @@ const JackMenu = new Lang.Class({
             for (let j = 0; j < client.inputs.length; j++)
                 if (client.inputs[j]) {
                     inputs.push('[' + clients_list[i] + ']' + client.name + ':[' + j + ']' + client.inputs[j][1]);
+                    if (!client.inputs[j][2])
+                        continue;
                     for (let k = 0; k < client.inputs[j][2].length; k++) {
                         let srcClient = parseInt(client.inputs[j][2][k].substr(0, client.inputs[j][2][k].indexOf(':')));
                         if (srcClient > 127)
@@ -703,6 +707,8 @@ const JackMenu = new Lang.Class({
             for (let j = 0; j < client.outputs.length; j++)
                 if (client.outputs[j]) {
                     outputs.push('[' + clients_list[i] + ']' + client.name + ':[' + j + ']' + client.outputs[j][1]);
+                    if (!client.outputs[j][2])
+                        continue;
                     for (let k = 0; k < client.outputs[j][2].length; k++) {
                         let destClient = parseInt(client.outputs[j][2][k].substr(0, client.outputs[j][2][k].indexOf(':')));
                         if (destClient > 127)
@@ -732,7 +738,7 @@ Signals.addSignalMethods(JackMenu.prototype);
 
 let jackmenu = null;
 let settings;
-let remove_timeout = 0;
+let remove_timeout = 1;
 let alsa_clients = 0;
 
 // function to retrieve settings
@@ -754,12 +760,11 @@ function get_settings() {
 
 // callback function to periodically check the alsa state
 function check_alsa_clients (){
-    if (remove_timeout) {
-        jackmenu.destroy();
-        jackmenu = null;
+    if (remove_timeout)
         return false;
-    }
     let [res, out] = GLib.spawn_command_line_sync('cat /proc/asound/seq/clients | grep "cur  clients"');
+    if (!res || !out || !jackmenu)
+      return true;
     let clients = parseInt(String(out).match(/\d/));
     if (clients != alsa_clients) {
         alsa_clients = clients;
@@ -786,4 +791,6 @@ function enable() {
 
 function disable() {
     remove_timeout = 1;
+    jackmenu.destroy();
+    jackmenu = null;
 }
