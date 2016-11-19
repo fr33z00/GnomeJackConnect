@@ -315,13 +315,13 @@ const JackMenuItem = new Lang.Class({
                 continue;
             let port0, chan0, port1, chan1;
             for (let j = 0; j < port_list.length; j++) {
-                let port = port_list[j].split(':')[0];
-                let chan = port_list[j].split(':')[1];
-                if (port.match(/\D*/) == con[0] && chan == con[1]) {
+                let port = port_list[j].substr(0,port_list[j].indexOf(':'));
+                let chan = port_list[j].substr(port_list[j].indexOf(':')+1);
+                if (port.match(/\D*\d*\D+/) == con[0] && chan == con[1]) {
                     port0 = port;
                     chan0 = chan;
                 }
-                if (port.match(/\D*/) == con[2] && chan == con[3]) {
+                if (port.match(/\D*\d*\D+/) == con[2] && chan == con[3]) {
                     port1 = port;
                     chan1 = chan;
                 }
@@ -375,11 +375,11 @@ const JackMenuItem = new Lang.Class({
             let chan1 = input.substr(input.indexOf(':')+1);
             if (connected) {
                 jpProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
-                this.deleteConnection(port0.match(/\D*/)+'::'+chan0+'::'+port1.match(/\D*/)+'::'+chan1);
+                this.deleteConnection(port0.match(/\D*\d*\D+/)+'::'+chan0+'::'+port1.match(/\D*\d*\D+/)+'::'+chan1);
             }
             else {
                 jpProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
-                this.saveConnection(port0.match(/\D*/)+'::'+chan0+'::'+port1.match(/\D*/)+'::'+chan1);
+                this.saveConnection(port0.match(/\D*\d*\D+/)+'::'+chan0+'::'+port1.match(/\D*\d*\D+/)+'::'+chan1);
             }
         }
     },
