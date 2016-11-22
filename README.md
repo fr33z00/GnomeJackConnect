@@ -17,6 +17,8 @@ Requirements
 Installation
 ------------
 
+The easyest way is to go to https://extensions.gnome.org/extension/1138/jackconnect/ and switch to ON. Alternaticely, for a manual install, here are the steps.
+
 - Clone somewhere
 ```
 git clone https://github.com/fr33z00/GnomeJackConnect
