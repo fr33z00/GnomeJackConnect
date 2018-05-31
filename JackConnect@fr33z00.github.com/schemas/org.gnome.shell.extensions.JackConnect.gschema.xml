@@ -1,16 +1,31 @@
 <schemalist gettext-domain="JackConnect">
   <schema id="org.gnome.shell.extensions.JackConnect" path="/org/gnome/shell/extensions/JackConnect/">
-    <key name="audio" type="s">
+    <key name="audio-set" type="s">
       <default>""</default>
       <summary>audio connections</summary>
       <description>Stored audio connections</description>
     </key>
-    <key name="midi" type="s">
+    <key name="audio-unset" type="s">
+      <default>""</default>
+      <summary>audio connections</summary>
+      <description>Stored audio connections</description>
+    </key>
+    <key name="midi-set" type="s">
       <default>""</default>
       <summary>midi connections</summary>
       <description>Stored midi connections</description>
     </key>
-    <key name="alsa" type="s">
+    <key name="midi-unset" type="s">
+      <default>""</default>
+      <summary>midi connections</summary>
+      <description>Stored midi connections</description>
+    </key>
+    <key name="alsa-set" type="s">
+      <default>""</default>
+      <summary>alsa connections</summary>
+      <description>Stored alsa connections</description>
+    </key>
+    <key name="alsa-unset" type="s">
       <default>""</default>
       <summary>alsa connections</summary>
       <description>Stored alsa connections</description>
