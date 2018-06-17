@@ -303,7 +303,7 @@ const JackMenuItem = new Lang.Class({
         this.parent(label, inputs, outputs, connections);
     },
     
-    restoreConnections: function(con_list, port_list, set) {
+    restoreConnections2: function(con_list, port_list, set) {
         for (let i = 0; i < con_list.length; i++) {
             if (!con_list[i].length)
                 continue;
@@ -353,13 +353,13 @@ const JackMenuItem = new Lang.Class({
             let str = settings.get_string(this.label + "-set");
             let con_list = str.split(',');
             if (con_list.length)
-                this.restoreConnections(con_list, port_list, true)
+                this.restoreConnections2(con_list, port_list, true)
         }
         { // Restore unset connections
             let str = settings.get_string(this.label + "-unset");
             let con_list = str.split(',');
             if (con_list.length)
-                this.restoreConnections(con_list, port_list, false)
+                this.restoreConnections2(con_list, port_list, false)
         }
     },
 
