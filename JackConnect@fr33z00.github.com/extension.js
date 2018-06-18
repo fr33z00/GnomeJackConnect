@@ -148,14 +148,14 @@ const JackBaseMenuItem = new Lang.Class({
     },
 
     // the function to store one connection to disk
-    saveConnection: function(connection) {
-        let str = settings.get_string(this.label);
-        settings.set_string(this.label, str + connection + ',');
+    saveConnection: function(connection, label) {
+        let str = settings.get_string(label);
+        settings.set_string(label, str + connection + ',');
     },
 
     // a function to delete one connection from disk
-    deleteConnection: function(connection) {
-        let str = settings.get_string(this.label);
+    deleteConnection: function(connection, label) {
+        let str = settings.get_string(label);
         if (!str.length)
             return;
         let newstr = '';
@@ -163,7 +163,19 @@ const JackBaseMenuItem = new Lang.Class({
         for (let i = 0; i < con_list.length; i++)
             if (con_list[i] != connection && con_list[i].length)
                 newstr += con_list[i] + ',';
-        settings.set_string(this.label, newstr);
+        settings.set_string(label, newstr);
+    },
+
+    // Saves a connection as set
+    setConnection: function(connection) {
+        this.deleteConnection(connection, this.label + "-unset");
+        this.saveConnection(connection, this.label + "-set");
+    },
+
+    // Saves a connection as unset
+    unsetConnection: function(connection) {
+        this.deleteConnection(connection, this.label + "-set");
+        this.saveConnection(connection, this.label + "-unset");
     },
 
     // the prototype of the function that restores the connections
@@ -290,23 +302,8 @@ const JackMenuItem = new Lang.Class({
     _init: function(label, inputs, outputs, connections) {
         this.parent(label, inputs, outputs, connections);
     },
-
-    // function to restore the audio/midi connections    
-    restoreConnections: function() {
-        let str = settings.get_string(this.label);
-        let con_list = str.split(',');
-        if (!con_list.length)
-            return;
-        let port_list;
-        try{
-            if (jcProxy.IsStartedSync())
-                port_list = jpProxy.GetAllPortsSync();
-            else
-                return;
-        } catch(e) {
-            return;
-        }
-        port_list = String(port_list).split(',');
+    
+    restoreConnections2: function(con_list, port_list, set) {
         for (let i = 0; i < con_list.length; i++) {
             if (!con_list[i].length)
                 continue;
@@ -330,11 +327,41 @@ const JackMenuItem = new Lang.Class({
             }
             if (port0 && port1)
                 try {
-                    jpProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
+                    if (set)
+                        jpProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
+                    else
+                        jpProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
                 } catch(e){
                 }
         }
-    },    
+    },
+
+    // function to restore the audio/midi connections    
+    restoreConnections: function() {
+        let port_list;
+        try{
+            if (jcProxy.IsStartedSync())
+                port_list = jpProxy.GetAllPortsSync();
+            else
+                return;
+        } catch(e) {
+            return;
+        }
+        port_list = String(port_list).split(',');
+        
+        { // Restore set connections
+            let str = settings.get_string(this.label + "-set");
+            let con_list = str.split(',');
+            if (con_list.length)
+                this.restoreConnections2(con_list, port_list, true)
+        }
+        { // Restore unset connections
+            let str = settings.get_string(this.label + "-unset");
+            let con_list = str.split(',');
+            if (con_list.length)
+                this.restoreConnections2(con_list, port_list, false)
+        }
+    },
 
     // function to add or remove a connection to/from the connection graph
     addRemoveConnection: function(x, y) {
@@ -375,11 +402,11 @@ const JackMenuItem = new Lang.Class({
             let chan1 = input.substr(input.indexOf(':')+1);
             if (connected) {
                 jpProxy.DisconnectPortsByNameSync(port0, chan0, port1, chan1);
-                this.deleteConnection(port0.match(/\D*\d*\D+/)+'::'+chan0+'::'+port1.match(/\D*\d*\D+/)+'::'+chan1);
+                this.unsetConnection(port0.match(/\D*\d*\D+/)+'::'+chan0+'::'+port1.match(/\D*\d*\D+/)+'::'+chan1);
             }
             else {
                 jpProxy.ConnectPortsByNameSync(port0, chan0, port1, chan1);
-                this.saveConnection(port0.match(/\D*\d*\D+/)+'::'+chan0+'::'+port1.match(/\D*\d*\D+/)+'::'+chan1);
+                this.setConnection(port0.match(/\D*\d*\D+/)+'::'+chan0+'::'+port1.match(/\D*\d*\D+/)+'::'+chan1);
             }
         }
     },
@@ -403,7 +430,7 @@ const AlsaMenuItem = new Lang.Class({
 
     // function to restore the alsa connections    
     restoreConnections: function() {
-        let str = settings.get_string(this.label);
+        let str = settings.get_string(this.label + "-set");
         let con_list = str.split(',');
         if (!con_list.length)
             return;
@@ -456,11 +483,11 @@ const AlsaMenuItem = new Lang.Class({
             let chan1 = input.split(':')[1].match(/\d+/);
             if (connected) {
                 GLib.spawn_command_line_sync('aconnect -d ' + port0 + ':' + chan0 + ' ' + port1 + ':' + chan1);
-                this.deleteConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+                this.unsetConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
             }
             else {
                 GLib.spawn_command_line_sync('aconnect ' + port0 + ':' + chan0 + ' ' + port1 + ':' + chan1);
-                this.saveConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
+                this.setConnection(port0+'::'+chan0+'::'+port1+'::'+chan1);
             }
             this.emit("alsa-changed");
         }
